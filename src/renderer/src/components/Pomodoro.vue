@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Play, Pause, RotateCcw } from 'lucide-vue-next'
-import { IPCEvents } from 'src/shared/events'
+import { ReceiveIPCEvents, SendIPCEvents } from 'src/shared/events'
+import { match } from 'ts-pattern'
+import { IpcRendererListener } from '@electron-toolkit/preload'
 
 // --- Types ---
 type TimerMode = 'work' | 'shortBreak' | 'longBreak'
@@ -24,13 +26,31 @@ const BREAK_MESSAGES = [
   'Focus on something green outside 🌿'
 ]
 
-const sendIPC = (event: IPCEvents) => {
-  window.electron.ipcRenderer.send(event)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sendIPC = (event: SendIPCEvents, ...args: any[]) => {
+  window.electron.ipcRenderer.send(event, ...args)
+}
+
+const receiveIPC = (event: ReceiveIPCEvents, listener: IpcRendererListener) => {
+  window.electron.ipcRenderer.on(event, listener)
 }
 
 const ipcHandler = {
-  showOverlay: (): void => sendIPC('showOverlay'),
-  hideOverlay: (): void => sendIPC('hideOverlay')
+  showOverlay: (): void => {
+    sendIPC('showOverlay')
+  },
+  hideOverlay: (): void => {
+    sendIPC('hideOverlay')
+  },
+  startTimer: (timeLeft: number): void => {
+    sendIPC('timer:start', timeLeft)
+  },
+  pauseTimer: (): void => {
+    sendIPC('timer:pause')
+  },
+  resetTimer: (): void => {
+    sendIPC('timer:reset')
+  }
 }
 
 // --- State ---
@@ -41,7 +61,20 @@ const showBreakScreen = ref(false)
 const breakMessage = ref('')
 const pomodorosCompleted = ref(0)
 
-let intervalId: ReturnType<typeof setInterval> | null = null
+const handleIPCEvents = (event: ReceiveIPCEvents) => {
+  match(event)
+    .with('timer:tick', () => {
+      receiveIPC(event, (_, timeLeft_) => {
+        timeLeft.value = timeLeft_
+      })
+    })
+    .with('timer:done', () => {
+      receiveIPC(event, () => {
+        handleTimerComplete()
+      })
+    })
+    .otherwise(() => console.log('Unknown event'))
+}
 
 // --- Logic ---
 
@@ -66,40 +99,26 @@ const handleScreenOverlay = (show: boolean) => {
 }
 
 const startTimer = () => {
-  if (intervalId) {
-    clearInterval(intervalId)
-  }
-
-  intervalId = setInterval(() => {
-    if (timeLeft.value > 0) {
-      timeLeft.value--
-    } else {
-      if (intervalId) {
-        clearInterval(intervalId)
-        intervalId = null
-      }
-      handleTimerComplete()
-    }
-  }, 1000)
+  isRunning.value = true
+  ipcHandler.startTimer(timeLeft.value)
 }
 
 const pauseTimer = () => {
-  if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
-  }
   isRunning.value = false
+  ipcHandler.pauseTimer()
+}
+
+const resetTimer = () => {
+  isRunning.value = false
+  timeLeft.value = TIMER_DURATIONS[mode.value]
+  ipcHandler.resetTimer()
 }
 
 const stopBreak = () => {
   handleScreenOverlay(false)
   mode.value = 'work'
   timeLeft.value = TIMER_DURATIONS.work
-  if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
-  }
-  isRunning.value = false
+  pauseTimer()
 }
 
 const startBreak = () => {
@@ -112,15 +131,6 @@ const startLongBreak = () => {
   mode.value = 'longBreak'
   timeLeft.value = TIMER_DURATIONS.longBreak
   startTimer()
-}
-
-const resetTimer = () => {
-  if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
-  }
-  timeLeft.value = TIMER_DURATIONS['work']
-  isRunning.value = false
 }
 
 const handleTimerComplete = () => {
@@ -147,9 +157,9 @@ const handleBreakContinue = () => {
   stopBreak()
 }
 
-// Cleanup on unmount
-onUnmounted(() => {
-  if (intervalId) clearInterval(intervalId)
+onMounted(() => {
+  handleIPCEvents('timer:tick')
+  handleIPCEvents('timer:done')
 })
 </script>
 

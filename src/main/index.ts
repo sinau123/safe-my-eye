@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { IPCEvents } from '../shared/events'
+import { SendIPCEvents } from '../shared/events'
 import { match } from 'ts-pattern'
 
 function createWindow(): BrowserWindow {
@@ -39,37 +39,6 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
-function handleIPCEvents(event: IPCEvents, browserWindow: BrowserWindow): void {
-  match(event)
-    .with('showOverlay', () => {
-      ipcMain.on(event, () => {
-        console.log('showOverlay')
-        const primaryDisplay = screen.getPrimaryDisplay()
-        const { width, height } = primaryDisplay.workAreaSize
-
-        browserWindow.maximize()
-        browserWindow.show()
-        browserWindow.setAlwaysOnTop(true)
-        browserWindow.setSkipTaskbar(true)
-        browserWindow.setMenuBarVisibility(false)
-        browserWindow.setFullScreen(true)
-        browserWindow.setSize(width, height)
-      })
-    })
-    .with('hideOverlay', () => {
-      ipcMain.on(event, () => {
-        console.log('hideOverlay')
-        browserWindow.setFullScreen(false)
-        browserWindow.setSkipTaskbar(false)
-        browserWindow.setMenuBarVisibility(true)
-        browserWindow.setAlwaysOnTop(false)
-        browserWindow.setSize(500, 800)
-        browserWindow.center()
-      })
-    })
-    .otherwise(() => console.log('Unknown event'))
-}
-
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -86,10 +55,78 @@ app.whenReady().then(() => {
 
   const browserWindow = createWindow()
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
-  handleIPCEvents('showOverlay', browserWindow)
-  handleIPCEvents('hideOverlay', browserWindow)
+  function handleIPCEvents(event: SendIPCEvents): void {
+    match(event)
+      .with('showOverlay', () => {
+        ipcMain.on(event, () => {
+          const primaryDisplay = screen.getPrimaryDisplay()
+          const { width, height } = primaryDisplay.workAreaSize
+
+          browserWindow.maximize()
+          browserWindow.show()
+          browserWindow.setAlwaysOnTop(true)
+          browserWindow.setSkipTaskbar(true)
+          browserWindow.setMenuBarVisibility(false)
+          browserWindow.setFullScreen(true)
+          browserWindow.setSize(width, height)
+        })
+      })
+      .with('hideOverlay', () => {
+        ipcMain.on(event, () => {
+          browserWindow.setFullScreen(false)
+          browserWindow.setSkipTaskbar(false)
+          browserWindow.setMenuBarVisibility(true)
+          browserWindow.setAlwaysOnTop(false)
+          browserWindow.setSize(500, 800)
+          browserWindow.center()
+        })
+      })
+      .with('timer:start', () => {
+        ipcMain.on(event, (_, seconds) => {
+          startTimer(seconds)
+        })
+      })
+      .with('timer:pause', () => {
+        ipcMain.on(event, () => clearInterval(timerInterval))
+      })
+      .with('timer:reset', () => {
+        ipcMain.on(event, () => {
+          clearInterval(timerInterval)
+        })
+      })
+      .otherwise(() => console.log('Unknown event'))
+  }
+
+  function initListeners() {
+    handleIPCEvents('showOverlay')
+    handleIPCEvents('hideOverlay')
+    handleIPCEvents('timer:start')
+    handleIPCEvents('timer:pause')
+    handleIPCEvents('timer:reset')
+  }
+
+  // Timer State
+  let timerInterval: NodeJS.Timeout | undefined = undefined
+  let timeLeft = 0
+
+  function startTimer(seconds: number) {
+    clearInterval(timerInterval)
+    timeLeft = seconds
+
+    timerInterval = setInterval(() => {
+      timeLeft -= 1
+
+      // Send updates to renderer
+      browserWindow.webContents.send('timer:tick', timeLeft)
+
+      if (timeLeft <= 0) {
+        clearInterval(timerInterval)
+        browserWindow.webContents.send('timer:done')
+      }
+    }, 1000)
+  }
+
+  initListeners()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
