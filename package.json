@@ -1,10 +1,25 @@
 {
-  "name": "pomodoro",
+  "name": "safe-my-eye",
   "version": "1.0.0",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",
+  "productName": "Safe My Eye",
+  "build": {
+    "appId": "com.safe-my-eye.app",
+    "productName": "Safe My Eye",
+    "directories": {
+      "buildResources": "resources"
+    },
+    "icon": "resources/icon.png",
+    "mac": {
+      "icon": "resources/icon.icns"
+    },
+    "win": {
+      "icon": "resources/icon.ico"
+    }
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

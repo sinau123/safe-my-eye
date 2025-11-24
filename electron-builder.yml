@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: pomodoro
+appId: com.safe-my-eye.app
+productName: Safe My Eye
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: pomodoro
+  executableName: safe-my-eye
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
