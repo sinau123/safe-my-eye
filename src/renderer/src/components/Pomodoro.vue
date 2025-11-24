@@ -8,12 +8,12 @@ type TimerMode = 'work' | 'shortBreak' | 'longBreak'
 
 // --- Constants ---
 const TIMER_DURATIONS = {
-  work: 10, // 25 minutes
-  shortBreak: 5, // 5 minutes
-  longBreak: 10 // 15 minutes
+  work: 25 * 60, // 25 minutes
+  shortBreak: 1 * 60, // 1 minutes
+  longBreak: 10 * 60 // 10 minutes
 }
 
-const pomodoroMaxCount = 2
+const pomodoroMaxCount = 5
 
 const BREAK_MESSAGES = [
   'Look at something 20 feet away for 20 seconds 👁️',
