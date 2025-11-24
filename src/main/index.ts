@@ -1,13 +1,15 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { IPCEvents } from '../shared/events'
+import { match } from 'ts-pattern'
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 900,
-    height: 670,
+    height: 800,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -33,6 +35,39 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  return mainWindow
+}
+
+function handleIPCEvents(event: IPCEvents, browserWindow: BrowserWindow): void {
+  match(event)
+    .with('showOverlay', () => {
+      ipcMain.on(event, () => {
+        console.log('showOverlay')
+        const primaryDisplay = screen.getPrimaryDisplay()
+        const { width, height } = primaryDisplay.workAreaSize
+
+        browserWindow.maximize()
+        browserWindow.show()
+        browserWindow.setAlwaysOnTop(true)
+        browserWindow.setSkipTaskbar(true)
+        browserWindow.setMenuBarVisibility(false)
+        browserWindow.setFullScreen(true)
+        browserWindow.setSize(width, height)
+      })
+    })
+    .with('hideOverlay', () => {
+      ipcMain.on(event, () => {
+        console.log('hideOverlay')
+        browserWindow.setFullScreen(false)
+        browserWindow.setSkipTaskbar(false)
+        browserWindow.setMenuBarVisibility(true)
+        browserWindow.setAlwaysOnTop(false)
+        browserWindow.setSize(500, 800)
+        browserWindow.center()
+      })
+    })
+    .otherwise(() => console.log('Unknown event'))
 }
 
 // This method will be called when Electron has finished
@@ -49,10 +84,12 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  const browserWindow = createWindow()
+
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
-
-  createWindow()
+  handleIPCEvents('showOverlay', browserWindow)
+  handleIPCEvents('hideOverlay', browserWindow)
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
