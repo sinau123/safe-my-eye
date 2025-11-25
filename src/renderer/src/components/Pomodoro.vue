@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Play, Pause, RotateCcw } from 'lucide-vue-next'
+import { Play, Pause, RotateCcw, Settings } from 'lucide-vue-next'
 import { ReceiveIPCEvents, SendIPCEvents } from 'src/shared/events'
 import { match } from 'ts-pattern'
 import { IpcRendererListener } from '@electron-toolkit/preload'
-
-// --- Types ---
-type TimerMode = 'work' | 'shortBreak' | 'longBreak'
+import SettingsComponent from './Settings.vue'
 
 // --- Constants ---
-const TIMER_DURATIONS = {
-  work: 25 * 60, // 25 minutes
+const timeSettings = ref({
+  work: 20 * 60, // 20 minutes
   shortBreak: 1 * 60, // 1 minutes
   longBreak: 10 * 60 // 10 minutes
+})
+
+const settings = localStorage.getItem('timeSettings')
+console.log(settings)
+
+if (settings) {
+  timeSettings.value = JSON.parse(settings)
 }
 
 const pomodoroMaxCount = 5
@@ -50,27 +55,50 @@ const ipcHandler = {
   },
   resetTimer: (): void => {
     sendIPC('timer:reset')
+  },
+  startBreakTimer: (duration: number): void => {
+    sendIPC('timer-break:start', duration)
+  },
+  resetBreakTimer: (): void => {
+    sendIPC('timer-break:reset')
   }
 }
 
-// --- State ---
-const mode = ref<TimerMode>('work')
-const timeLeft = ref(TIMER_DURATIONS.work)
-const isRunning = ref(false)
+const timer = ref({
+  work: {
+    timeLeft: timeSettings.value.work,
+    isRunning: false
+  },
+  break: {
+    timeLeft: timeSettings.value.shortBreak,
+    isRunning: false
+  }
+})
 const showBreakScreen = ref(false)
 const breakMessage = ref('')
 const pomodorosCompleted = ref(0)
+const settingsOpen = ref(false)
 
 const handleIPCEvents = (event: ReceiveIPCEvents) => {
   match(event)
     .with('timer:tick', () => {
       receiveIPC(event, (_, timeLeft_) => {
-        timeLeft.value = timeLeft_
+        timer.value.work.timeLeft = timeLeft_
       })
     })
     .with('timer:done', () => {
       receiveIPC(event, () => {
         handleTimerComplete()
+      })
+    })
+    .with('timer-break:tick', () => {
+      receiveIPC(event, (_, timeLeft_) => {
+        timer.value.break.timeLeft = timeLeft_
+      })
+    })
+    .with('timer-break:done', () => {
+      receiveIPC(event, () => {
+        handleBreakTimerComplete()
       })
     })
     .otherwise(() => console.log('Unknown event'))
@@ -79,8 +107,8 @@ const handleIPCEvents = (event: ReceiveIPCEvents) => {
 // --- Logic ---
 
 const getProgress = computed(() => {
-  const totalTime = TIMER_DURATIONS[mode.value]
-  return ((totalTime - timeLeft.value) / totalTime) * 100
+  const totalTime = timeSettings.value.work
+  return ((totalTime - timer.value.work.timeLeft) / totalTime) * 100
 })
 
 const formatTime = (seconds: number) => {
@@ -98,69 +126,80 @@ const handleScreenOverlay = (show: boolean) => {
   }
 }
 
-const startTimer = () => {
-  isRunning.value = true
-  ipcHandler.startTimer(timeLeft.value)
+const startTimer = (value?: number) => {
+  timer.value.work.isRunning = true
+  let value_ = timer.value.work.timeLeft
+  if (value) {
+    value_ = value
+  }
+  ipcHandler.startTimer(value_)
 }
 
 const pauseTimer = () => {
-  isRunning.value = false
+  timer.value.work.isRunning = false
   ipcHandler.pauseTimer()
 }
 
 const resetTimer = () => {
-  isRunning.value = false
-  timeLeft.value = TIMER_DURATIONS[mode.value]
+  timer.value.work.isRunning = false
+  timer.value.work.timeLeft = timeSettings.value.work
   ipcHandler.resetTimer()
 }
 
 const stopBreak = () => {
   handleScreenOverlay(false)
-  mode.value = 'work'
-  timeLeft.value = TIMER_DURATIONS.work
+  timer.value.work.timeLeft = timeSettings.value.work
+  timer.value.break.timeLeft = timeSettings.value.shortBreak
+  ipcHandler.resetBreakTimer()
   pauseTimer()
 }
 
 const startBreak = () => {
-  mode.value = 'shortBreak'
-  timeLeft.value = TIMER_DURATIONS.shortBreak
-  startTimer()
+  timer.value.break.timeLeft = timeSettings.value.shortBreak
+  ipcHandler.startBreakTimer(timeSettings.value.shortBreak)
+  handleScreenOverlay(true)
 }
 
 const startLongBreak = () => {
-  mode.value = 'longBreak'
-  timeLeft.value = TIMER_DURATIONS.longBreak
-  startTimer()
+  timer.value.break.timeLeft = timeSettings.value.longBreak
+  ipcHandler.startBreakTimer(timeSettings.value.longBreak)
+  handleScreenOverlay(true)
 }
 
 const handleTimerComplete = () => {
   const randomMessage = BREAK_MESSAGES[Math.floor(Math.random() * BREAK_MESSAGES.length)]
   breakMessage.value = randomMessage
+  pomodorosCompleted.value++
 
-  if (mode.value === 'work') {
-    pomodorosCompleted.value++
-    handleScreenOverlay(true)
-
-    if (pomodorosCompleted.value % pomodoroMaxCount === 0) {
-      startLongBreak()
-    } else {
-      startBreak()
-    }
+  if (pomodorosCompleted.value % pomodoroMaxCount === 0) {
+    startLongBreak()
   } else {
-    handleScreenOverlay(false)
-    stopBreak()
+    startBreak()
   }
 }
 
+const handleBreakTimerComplete = () => {
+  stopBreak()
+}
+
 const handleBreakContinue = () => {
-  handleScreenOverlay(false)
   stopBreak()
 }
 
 onMounted(() => {
   handleIPCEvents('timer:tick')
   handleIPCEvents('timer:done')
+  handleIPCEvents('timer-break:tick')
+  handleIPCEvents('timer-break:done')
 })
+
+const saveSettings = (data: { work: number; shortBreak: number; longBreak: number }) => {
+  timeSettings.value = data
+
+  localStorage.setItem('timeSettings', JSON.stringify(timeSettings.value))
+  settingsOpen.value = false
+  resetTimer()
+}
 </script>
 
 <template>
@@ -172,8 +211,8 @@ onMounted(() => {
     <div class="text-center px-8 max-w-2xl">
       <div class="animate-pulse-glow">
         <h1 class="text-6xl md:text-8xl font-bold text-white mb-8">Time for a break!</h1>
-        <h2 class="text-8xl font-bold text-white mb-4 select-none">
-          {{ formatTime(timeLeft) }}
+        <h2 class="text-8xl font-bold text-white mb-4 select-none tabular-nums">
+          {{ formatTime(timer.break.timeLeft) }}
         </h2>
         <p class="text-2xl md:text-4xl text-white/90 font-bold mb-12">
           {{ breakMessage }}
@@ -191,87 +230,124 @@ onMounted(() => {
   <!-- Main Interface -->
   <div v-else class="min-h-screen bg-gradient-soft flex items-center justify-center p-4 font-sans">
     <div class="w-full max-w-lg">
-      <!-- Timer Display -->
-      <div
-        class="bg-white/70 dark:bg-card/70 backdrop-blur-lg rounded-3xl p-12 mb-6 relative overflow-hidden shadow-glow"
-      >
-        <!-- Progress Ring -->
-        <div class="absolute inset-0 opacity-20">
-          <svg class="w-full h-full -rotate-90">
-            <circle
-              cx="50%"
-              cy="50%"
-              r="45%"
-              fill="none"
-              stroke="url(#gradient)"
-              stroke-width="8"
-              :stroke-dasharray="`${getProgress * 2.827} 282.7`"
-              class="transition-all duration-1000 ease-linear"
-            />
-            <defs>
-              <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="hsl(345, 100%, 70%)" />
-                <stop offset="100%" stop-color="hsl(270, 95%, 75%)" />
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-
-        <div class="relative text-center z-10">
-          <h2
-            class="text-8xl font-bold bg-gradient-primary bg-clip-text text-transparent mb-4 select-none"
-          >
-            {{ formatTime(timeLeft) }}
-          </h2>
-          <p class="text-slate-500 text-lg font-medium">
-            {{
-              mode === 'work' ? 'Focus Time' : mode === 'shortBreak' ? 'Short Break' : 'Long Break'
-            }}
-          </p>
-          <p class="text-sm text-slate-400 mt-2">Pomodoros completed: {{ pomodorosCompleted }}</p>
-        </div>
+      <div v-if="settingsOpen">
+        <!-- creat form to edit settings -->
+        <SettingsComponent
+          :time-settings="timeSettings"
+          @close="settingsOpen = false"
+          @update-time-settings="saveSettings"
+        />
       </div>
+      <div v-else>
+        <div class="flex justify-end">
+          <button
+            role="button"
+            class="flex justify-end py-4 gap-2 cursor-pointer hover:text-gray-400 transition-colors"
+            @click="settingsOpen = true"
+          >
+            <Settings /> <span class="font-bold">Settings</span>
+          </button>
+        </div>
+        <!-- Timer Display -->
+        <div
+          class="bg-white/70 dark:bg-card/70 backdrop-blur-lg rounded-3xl p-12 py-24 mb-6 relative overflow-hidden shadow-glow"
+        >
+          <!-- Progress Ring -->
+          <div
+            class="absolute inset-0 opacity-20 flex items-center justify-center"
+            :class="{ 'animate-[spin_8s_linear_infinite]': timer.work.isRunning }"
+          >
+            <svg class="w-full h-full -rotate-90 overflow-visible" viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r="46"
+                fill="none"
+                stroke="url(#gradient)"
+                stroke-width="4"
+                :stroke-dasharray="`${getProgress * 2.89} 289`"
+                class="transition-all duration-1000 ease-linear"
+              />
+              <defs>
+                <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="hsl(345, 100%, 70%)" />
+                  <stop offset="100%" stop-color="hsl(270, 95%, 75%)" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
 
-      <!-- Controls -->
-      <div class="flex gap-4 justify-center">
-        <button
-          class="bg-gradient-primary hover:opacity-90 text-white w-32 h-32 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
-          @click="
-            () => {
-              if (isRunning) {
-                pauseTimer()
-              } else {
-                isRunning = true
-                startTimer()
+          <div
+            class="absolute inset-0 opacity-20 flex items-center justify-center"
+            :class="{
+              'animate-[spin_5s_ease-in-out_infinite]': timer.work.isRunning,
+              hidden: !timer.work.isRunning && timer.work.timeLeft === timeSettings.work
+            }"
+          >
+            <svg class="w-full h-full -rotate-90 overflow-visible" viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r="40"
+                fill="none"
+                class="transition-all duration-1000 ease-linear"
+                stroke-width="2"
+                stroke="url(#gradient2)"
+                :stroke-dasharray="`100 289`"
+              />
+
+              <defs>
+                <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="100%" stop-color="hsl(345, 100%, 70%)" />
+                  <stop offset="0%" stop-color="hsl(270, 95%, 75%)" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <div class="relative text-center z-10">
+            <h2
+              class="text-8xl font-bold bg-gradient-primary bg-clip-text text-transparent mb-4 select-none tabular-nums"
+            >
+              {{ formatTime(timer.work.timeLeft) }}
+            </h2>
+            <p class="text-slate-500 text-lg font-medium">focus time</p>
+            <p class="text-sm text-slate-400 mt-2">completed: {{ pomodorosCompleted }}</p>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex gap-4 items-center justify-center">
+          <button
+            class="bg-gradient-primary cursor-pointer hover:opacity-90 text-white w-32 h-32 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
+            @click="
+              () => {
+                if (timer.work.isRunning) {
+                  pauseTimer()
+                } else {
+                  timer.work.isRunning = true
+                  startTimer()
+                }
               }
-            }
-          "
-        >
-          <Pause v-if="isRunning" class="w-12 h-12" />
-          <Play v-else class="w-12 h-12 ml-1" />
-        </button>
+            "
+          >
+            <Pause v-if="timer.work.isRunning" class="w-12 h-12" />
+            <Play v-else class="w-12 h-12 ml-1" />
+          </button>
 
-        <button
-          class="w-24 h-24 rounded-full border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center transition-colors shadow-sm"
-          @click="resetTimer"
-        >
-          <RotateCcw class="w-8 h-8" />
-        </button>
+          <button
+            class="w-24 h-24 rounded-full border-2 border-slate-200 cursor-pointer bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center transition-colors shadow-sm"
+            @click="resetTimer"
+          >
+            <RotateCcw class="w-8 h-8" />
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Custom Utility Classes mimicking the React setup */
-.bg-gradient-primary {
-  background-image: linear-gradient(135deg, hsl(345, 100%, 70%), hsl(270, 95%, 75%));
-}
-
-.bg-gradient-soft {
-  background-image: linear-gradient(to bottom right, #fdfbfb, #ebedee);
-}
-
 .shadow-glow {
   box-shadow: 0 0 20px rgba(236, 72, 153, 0.2);
 }

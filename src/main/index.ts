@@ -2,13 +2,15 @@ import { app, shell, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { SendIPCEvents } from '../shared/events'
+import { ReceiveIPCEvents, SendIPCEvents } from '../shared/events'
 import { match } from 'ts-pattern'
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function createWindow(): BrowserWindow {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
+    width: 500,
     height: 800,
     show: false,
     autoHideMenuBar: true,
@@ -17,11 +19,13 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     },
-    icon
+    icon,
+    resizable: false
   })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    // mainWindow.webContents.openDevTools()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -47,10 +51,6 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
-  // if (process.platform === 'darwin') {
-  //   app.dock?.setIcon(icon)
-  // }
-
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
@@ -60,73 +60,137 @@ app.whenReady().then(() => {
 
   const browserWindow = createWindow()
 
-  function handleIPCEvents(event: SendIPCEvents): void {
-    match(event)
-      .with('showOverlay', () => {
-        ipcMain.on(event, () => {
-          const primaryDisplay = screen.getPrimaryDisplay()
-          const { width, height } = primaryDisplay.workAreaSize
-
-          browserWindow.maximize()
-          browserWindow.show()
-          browserWindow.setAlwaysOnTop(true)
-          browserWindow.setSkipTaskbar(true)
-          browserWindow.setMenuBarVisibility(false)
-          browserWindow.setFullScreen(true)
-          browserWindow.setSize(width, height)
-        })
-      })
-      .with('hideOverlay', () => {
-        ipcMain.on(event, () => {
-          browserWindow.setFullScreen(false)
-          browserWindow.setSkipTaskbar(false)
-          browserWindow.setMenuBarVisibility(true)
-          browserWindow.setAlwaysOnTop(false)
-          browserWindow.setSize(500, 800)
-          browserWindow.center()
-        })
-      })
-      .with('timer:start', () => {
-        ipcMain.on(event, (_, seconds) => {
-          startTimer(seconds)
-        })
-      })
-      .with('timer:pause', () => {
-        ipcMain.on(event, () => clearInterval(timerInterval))
-      })
-      .with('timer:reset', () => {
-        ipcMain.on(event, () => {
-          clearInterval(timerInterval)
-        })
-      })
-      .otherwise(() => console.log('Unknown event'))
-  }
-
   function initListeners() {
-    handleIPCEvents('showOverlay')
-    handleIPCEvents('hideOverlay')
-    handleIPCEvents('timer:start')
-    handleIPCEvents('timer:pause')
-    handleIPCEvents('timer:reset')
+    function handleIPCEvents(event: SendIPCEvents): void {
+      match(event)
+        .with('showOverlay', () => {
+          ipcMain.on(event, async () => {
+            const primaryDisplay = screen.getPrimaryDisplay()
+            const { width, height } = primaryDisplay.workAreaSize
+
+            if (browserWindow.isMinimized()) {
+              browserWindow.maximize()
+            }
+
+            await sleep(200)
+
+            browserWindow.setAlwaysOnTop(true, 'screen-saver')
+            browserWindow.setSkipTaskbar(true)
+            browserWindow.setMenuBarVisibility(false)
+            browserWindow.setSize(width, height)
+            browserWindow.setFullScreen(true)
+
+            await sleep(200)
+            browserWindow.setFullScreenable(false)
+          })
+        })
+        .with('hideOverlay', () => {
+          ipcMain.on(event, async () => {
+            browserWindow.setFullScreenable(true)
+            await sleep(200)
+
+            browserWindow.setFullScreen(false)
+            await sleep(200)
+
+            browserWindow.setSize(500, 800)
+            browserWindow.setSkipTaskbar(false)
+            browserWindow.setAlwaysOnTop(false)
+          })
+        })
+        .with('timer:start', () => {
+          ipcMain.on(event, (_, seconds) => {
+            startTimer(seconds)
+          })
+        })
+        .with('timer:pause', () => {
+          ipcMain.on(event, () => clearInterval(timer.work.timerInterval))
+        })
+        .with('timer:reset', () => {
+          ipcMain.on(event, () => {
+            clearInterval(timer.work.timerInterval)
+          })
+        })
+        .with('timer-break:start', () => {
+          ipcMain.on(event, (_, seconds) => {
+            startBreakTimer(seconds)
+          })
+        })
+        .with('timer-break:reset', () => {
+          ipcMain.on(event, () => {
+            clearInterval(timer.break.timerInterval)
+          })
+        })
+        .otherwise(() => console.log('Unknown event'))
+    }
+
+    const events = [
+      'showOverlay',
+      'hideOverlay',
+      'timer:start',
+      'timer:pause',
+      'timer:reset',
+      'timer-break:start',
+      'timer-break:reset'
+    ] as SendIPCEvents[]
+
+    events.forEach((event) => handleIPCEvents(event))
   }
 
-  // Timer State
-  let timerInterval: NodeJS.Timeout | undefined = undefined
-  let timeLeft = 0
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function sendIPCEvents(events: ReceiveIPCEvents, ...args: any[]) {
+    browserWindow.webContents.send(events, ...args)
+  }
+
+  const timer: {
+    work: {
+      timerInterval: NodeJS.Timeout | undefined
+      timeLeft: number
+    }
+    break: {
+      timerInterval: NodeJS.Timeout | undefined
+      timeLeft: number
+    }
+  } = {
+    work: {
+      timerInterval: undefined,
+      timeLeft: 0
+    },
+    break: {
+      timerInterval: undefined,
+      timeLeft: 0
+    }
+  }
 
   function startTimer(seconds: number) {
-    clearInterval(timerInterval)
-    timeLeft = seconds
+    clearInterval(timer.work.timerInterval)
+    timer.work.timeLeft = seconds
 
-    timerInterval = setInterval(() => {
-      timeLeft -= 1
+    timer.work.timerInterval = setInterval(() => {
+      timer.work.timeLeft -= 1
 
       // Send updates to renderer
-      browserWindow.webContents.send('timer:tick', timeLeft)
+      sendIPCEvents('timer:tick', timer.work.timeLeft)
 
-      if (timeLeft <= 0) {
-        clearInterval(timerInterval)
-        browserWindow.webContents.send('timer:done')
+      if (timer.work.timeLeft <= 0) {
+        clearInterval(timer.work.timerInterval)
+        sendIPCEvents('timer:done')
+      }
+    }, 1000)
+  }
+
+  function startBreakTimer(seconds: number) {
+    clearInterval(timer.break.timerInterval)
+    timer.break.timeLeft = seconds
+
+    timer.break.timerInterval = setInterval(() => {
+      timer.break.timeLeft -= 1
+
+      // Send updates to renderer
+      sendIPCEvents('timer-break:tick', timer.break.timeLeft)
+
+      if (timer.break.timeLeft <= 0) {
+        clearInterval(timer.break.timerInterval)
+        sendIPCEvents('timer-break:done')
       }
     }, 1000)
   }
