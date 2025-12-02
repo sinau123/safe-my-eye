@@ -5,19 +5,24 @@ import { ReceiveIPCEvents, SendIPCEvents } from 'src/shared/events'
 import { match } from 'ts-pattern'
 import { IpcRendererListener } from '@electron-toolkit/preload'
 import SettingsComponent from './Settings.vue'
+import { useDelayBlockScreen } from '@renderer/hooks/useDelayBlockScreen'
 
 // --- Constants ---
 const timeSettings = ref({
   work: 20 * 60, // 20 minutes
   shortBreak: 1 * 60, // 1 minutes
-  longBreak: 10 * 60 // 10 minutes
+  longBreak: 10 * 60, // 10 minutes
+  autoPlayAfterBreak: false
 })
 
 const settings = localStorage.getItem('timeSettings')
-console.log(settings)
 
 if (settings) {
-  timeSettings.value = JSON.parse(settings)
+  try {
+    timeSettings.value = JSON.parse(settings)
+  } catch (error) {
+    console.error('Error parsing settings:', error)
+  }
 }
 
 const pomodoroMaxCount = 5
@@ -151,7 +156,12 @@ const stopBreak = () => {
   timer.value.work.timeLeft = timeSettings.value.work
   timer.value.break.timeLeft = timeSettings.value.shortBreak
   ipcHandler.resetBreakTimer()
-  pauseTimer()
+
+  if (timeSettings.value.autoPlayAfterBreak) {
+    startTimer()
+  } else {
+    pauseTimer()
+  }
 }
 
 const startBreak = () => {
@@ -193,13 +203,20 @@ onMounted(() => {
   handleIPCEvents('timer-break:done')
 })
 
-const saveSettings = (data: { work: number; shortBreak: number; longBreak: number }) => {
+const saveSettings = (data: {
+  work: number
+  shortBreak: number
+  longBreak: number
+  autoPlayAfterBreak: boolean
+}) => {
   timeSettings.value = data
 
   localStorage.setItem('timeSettings', JSON.stringify(timeSettings.value))
   settingsOpen.value = false
   resetTimer()
 }
+
+const { enabled: enableBreakScreen } = useDelayBlockScreen(showBreakScreen, 5000)
 </script>
 
 <template>
@@ -219,6 +236,7 @@ const saveSettings = (data: { work: number; shortBreak: number; longBreak: numbe
         </p>
       </div>
       <button
+        v-if="enableBreakScreen"
         class="bg-white/20 hover:bg-white/30 text-white font-bold border-2 border-white/40 backdrop-blur-sm text-xl px-8 py-6 h-auto rounded-lg transition-colors"
         @click="handleBreakContinue"
       >
@@ -312,7 +330,16 @@ const saveSettings = (data: { work: number; shortBreak: number; longBreak: numbe
               {{ formatTime(timer.work.timeLeft) }}
             </h2>
             <p class="text-slate-500 text-lg font-medium">focus time</p>
-            <p class="text-sm text-slate-400 mt-2">completed: {{ pomodorosCompleted }}</p>
+            <div class="flex gap-2 justify-center">
+              <p class="text-sm text-slate-400 mt-2">completed: {{ pomodorosCompleted }}</p>
+              <button
+                title="Reset"
+                class="bg-gradient-primary p-2 cursor-pointer hover:opacity-90 text-white size-8 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
+                @click="pomodorosCompleted = 0"
+              >
+                <RotateCcw />
+              </button>
+            </div>
           </div>
         </div>
 

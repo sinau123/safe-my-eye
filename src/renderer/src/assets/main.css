@@ -170,7 +170,7 @@ code {
   }
 } */
 
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* Custom Utility Classes mimicking the React setup */
 .bg-gradient-primary {

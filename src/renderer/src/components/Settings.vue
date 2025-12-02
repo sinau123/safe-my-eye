@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import Toggle from './Toggle.vue'
 
 interface Props {
   timeSettings: {
     work: number
     shortBreak: number
     longBreak: number
+    autoPlayAfterBreak: boolean
   }
 }
 
@@ -19,14 +21,16 @@ const props = defineProps<Props>()
 const innerTimeSettings = ref({
   work: props.timeSettings.work / 60,
   shortBreak: props.timeSettings.shortBreak / 60,
-  longBreak: props.timeSettings.longBreak / 60
+  longBreak: props.timeSettings.longBreak / 60,
+  autoPlayAfterBreak: props.timeSettings.autoPlayAfterBreak
 })
 
 const saveSettings = () => {
   emit('update-time-settings', {
     work: innerTimeSettings.value.work * 60,
     shortBreak: innerTimeSettings.value.shortBreak * 60,
-    longBreak: innerTimeSettings.value.longBreak * 60
+    longBreak: innerTimeSettings.value.longBreak * 60,
+    autoPlayAfterBreak: innerTimeSettings.value.autoPlayAfterBreak
   })
 }
 
@@ -79,6 +83,10 @@ const closeSettings = () => {
           )
         "
       />
+    </div>
+    <div class="flex items-center gap-2">
+      <label class="font-bold" for="autoPlayAfterBreak">Auto Play After Break</label>
+      <Toggle v-model="innerTimeSettings.autoPlayAfterBreak" />
     </div>
     <div class="flex justify-end gap-4">
       <button
